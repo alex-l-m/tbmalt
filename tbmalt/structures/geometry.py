@@ -271,16 +271,26 @@ class Geometry:
         """Distance matrix between atoms in the system."""
         # Todo: Modify to account for PBC
 
-        dist_raw = torch.cdist(self.positions, self.positions, p=2)
+        # Calculate the distance using the Gram matrix
+        # I'm doing this because I can't differentiate cdist twice
+        # The first dimension of the positions is a batch dimension
+        gram_matrix = torch.bmm(self.positions, self.positions.transpose(1, 2))
+        dist_raw_squared = gram_matrix.diagonal(dim1=-2, dim2=-1).unsqueeze(-1) + \
+                gram_matrix.diagonal(dim1=-2, dim2=-1).unsqueeze(-2) - \
+                2 * gram_matrix
+        # Fill diagonal with zeros before taking the square root to avoid
+        # negative values
+        # Get the batch size and number of vectors
+        B, n, _ = dist_raw_squared.shape
+        # Use indexing to set the diagonal to zero
+        indices = torch.arange(n, device=dist_raw_squared.device)
+        dist_raw_squared[:, indices, indices] = 0
+        dist_raw = torch.sqrt(dist_raw_squared)
+ 
         # Ensure padding area is zeroed out
         # But don't modify in place
         dist = dist_raw.clone()
         dist[self._mask_dist] = 0
-
-        # cdist bug, sometimes distances diagonal is not zero
-        idx = torch.arange(dist.shape[-1])
-        if not (dist[..., idx, idx].eq(0)).all():
-            dist[..., idx, idx] = 0.0
 
         return dist
 
